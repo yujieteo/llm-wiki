@@ -2,7 +2,8 @@
 
 A git-versioned, LLM-maintained wiki. Raw sources are immutable. Wiki notes are
 LLM-written. Build compiles them into `dist/notes.md`. Publish imports that file
-into your website notes.
+into your website notes using the same dated-paragraph format as
+`site/data/notes.md`.
 
 ## 5-minute start
 
@@ -14,7 +15,7 @@ into your website notes.
 6. Say `ingest <source>` to create a note under `wiki/<topic>/`.
 7. Say `compile the wiki` to review source changes and rebuild `wiki/index.md`.
 8. Run `./build.sh` to compile all wiki notes into `dist/notes.md`.
-9. Say `publish` to replace this wiki's imported section in the website notes file.
+9. Say `publish` to merge the compiled dated notes into the website notes file.
 
 To create another private wiki, clone this repository into a new directory, set a
 new private `origin`, and update `config.yaml`. Each clone keeps its sources,

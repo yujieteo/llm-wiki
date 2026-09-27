@@ -3,10 +3,10 @@
 # the website repo (invariant §2.6).
 #
 # Behavior (see spec §6.3):
-#   1. Read website.repo/branch/notes_path/section_header from config.yaml.
+#   1. Read website.repo/branch/notes_path from config.yaml.
 #   2. Clone to a temp dir (or pull a cached clone at .cache/website).
 #   3. git checkout <branch> && git pull.
-#   5. Append "\n\n<section_header>\n\n" + contents of dist/notes.md.
+#   5. Merge compiled paragraphs into matching dated sections.
 #   6. Guardrail: abort before committing if the diff exceeds 500 added lines.
 #   7. git add / commit.
 #   8. git push origin <branch>. Never --force. Never retried on failure.
@@ -38,18 +38,15 @@ def get(pattern, default=""):
 repo = get(r"^\s*repo:\s*(.+)$")
 branch = get(r"^\s*branch:\s*(.+)$", "main")
 notes_path = get(r"^\s*notes_path:\s*(.+)$", "notes.md")
-header = get(r'^\s*section_header:\s*(.+)$', "## LLM Wiki").strip('"').strip("'")
 print(repo)
 print(branch)
 print(notes_path)
-print(header)
 PYEOF
 )
 
 WEBSITE_REPO="${CFG_VALUES[0]:-}"
 WEBSITE_BRANCH="${CFG_VALUES[1]:-main}"
 NOTES_PATH="${CFG_VALUES[2]:-notes.md}"
-SECTION_HEADER="${CFG_VALUES[3]:-## LLM Wiki}"
 
 if [[ -z "$WEBSITE_REPO" || "$WEBSITE_REPO" == *"<user>"* ]]; then
   fail "append-notes.sh: website.repo is not configured in config.yaml"
@@ -89,11 +86,11 @@ TARGET_FILE="$CACHE_DIR/$NOTES_PATH"
 mkdir -p "$(dirname "$TARGET_FILE")"
 touch "$TARGET_FILE"
 
-# 4 & 5. Replace the previous section (if present) and append the new one.
-python3 - "$TARGET_FILE" "$SECTION_HEADER" "$REPO_ROOT/dist/notes.md" <<'PYEOF'
+# 4 & 5. Merge site-shaped notes into their dated sections.
+python3 - "$TARGET_FILE" "$REPO_ROOT/dist/notes.md" <<'PYEOF'
 import re, sys
 
-target_path, header, notes_path = sys.argv[1], sys.argv[2], sys.argv[3]
+target_path, notes_path = sys.argv[1], sys.argv[2]
 
 with open(target_path, "r", encoding="utf-8") as f:
     content = f.read()
@@ -101,13 +98,41 @@ with open(target_path, "r", encoding="utf-8") as f:
 with open(notes_path, "r", encoding="utf-8") as f:
     new_notes = f.read().rstrip("\n")
 
-match = re.search(rf"(?m)^{re.escape(header)}\s*$", content)
-content = content[:match.start()].rstrip("\n") if match else content.rstrip("\n")
+heading = re.compile(r"(?m)^## (\d{4}-\d{2}-\d{2})\s*$")
 
-if content:
-    content = content + "\n\n" + header + "\n\n" + new_notes + "\n"
-else:
-    content = header + "\n\n" + new_notes + "\n"
+def split_frontmatter(text):
+    match = re.match(r"\A(---\s*\n.*?\n---\s*\n)(.*)\Z", text, re.DOTALL)
+    return (match.group(1), match.group(2)) if match else ("", text)
+
+def parse(text):
+    matches = list(heading.finditer(text))
+    leading = text[:matches[0].start()].rstrip() if matches else text.rstrip()
+    sections = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        blocks = [block.strip() for block in re.split(r"\n\s*\n", text[match.end():end]) if block.strip()]
+        sections.setdefault(match.group(1), []).extend(blocks)
+    return leading, sections
+
+frontmatter, body = split_frontmatter(content)
+leading, sections = parse(body)
+compiled_leading, compiled = parse(new_notes)
+if compiled_leading or not compiled:
+    raise SystemExit("append-notes.sh: dist/notes.md must start with a dated section")
+
+tag_run = re.compile(r"(?:^|\s)(?:#[A-Za-z0-9][A-Za-z0-9_.-]*\s*)+$")
+for date, blocks in compiled.items():
+    current = sections.setdefault(date, [])
+    for block in reversed(blocks):
+        if not tag_run.search(block):
+            raise SystemExit(f"append-notes.sh: {date} note lacks trailing tags")
+        if block not in current:
+            current.insert(0, block)
+
+parts = [leading] if leading else []
+for date in sorted(sections, reverse=True):
+    parts.append(f"## {date}\n\n" + "\n\n".join(sections[date]))
+content = frontmatter + "\n\n".join(parts).rstrip() + "\n"
 
 with open(target_path, "w", encoding="utf-8") as f:
     f.write(content)

@@ -2,11 +2,10 @@
 # build.sh — deterministically concatenate all wiki notes into dist/notes.md.
 # No LLM runs in this path (invariant §2.4).
 #
-# Behavior (see spec §8):
+# Behavior:
 #   1. Glob wiki/**/*.md, excluding wiki/index.md, wiki/.diffs/**, wiki/.queue/**.
-#   2. Sort by topic (directory), then by updated descending.
-#   3. For each note: emit "### <title>" then the note body (frontmatter
-#      stripped). Precede each topic group with "## <topic>".
+#   2. Validate that each body is one site-note paragraph.
+#   3. Group by updated date and append frontmatter tags to each paragraph.
 #   4. Write to dist/notes.md.
 #   5. Commit dist/notes.md as a build artifact.
 #
@@ -22,8 +21,6 @@ mkdir -p "$REPO_ROOT/dist"
 python3 - "$REPO_ROOT" <<'PYEOF'
 import os
 import sys
-from itertools import groupby
-
 sys.path.insert(0, os.path.join(sys.argv[1], "scripts", "lib"))
 from frontmatter import split_frontmatter  # noqa: E402
 
@@ -57,12 +54,16 @@ for root, dirs, files in os.walk(WIKI_DIR):
         if missing:
             errors.append(f"wiki/{rel_path}: missing required field(s): {', '.join(missing)}")
             continue
-        topic = parts[0] if parts else "(root)"
+        body = body.strip()
+        if not body or "\n\n" in body or body.startswith("#"):
+            errors.append(f"wiki/{rel_path}: body must be one Markdown paragraph without a heading")
+            continue
+        tags = fm["tags"] if isinstance(fm["tags"], list) else [fm["tags"]]
         notes.append({
-            "title": fm["title"],
             "updated": fm["updated"],
-            "body": body.strip("\n"),
-            "topic": topic,
+            "body": body,
+            "tags": tags,
+            "path": rel_path,
         })
 
 if errors:
@@ -70,27 +71,21 @@ if errors:
         print(e, file=sys.stderr)
     sys.exit(1)
 
-notes.sort(key=lambda n: n["topic"])
-ordered = []
-for topic, group in groupby(notes, key=lambda n: n["topic"]):
-    g = sorted(group, key=lambda n: n["updated"], reverse=True)
-    ordered.append((topic, g))
-
 out_lines = []
-for topic, group in ordered:
-    out_lines.append(f"## {topic}")
+dates = sorted({note["updated"] for note in notes}, reverse=True)
+for updated in dates:
+    out_lines.append(f"## {updated}")
     out_lines.append("")
-    for note in group:
-        out_lines.append(f"### {note['title']}")
-        out_lines.append("")
-        out_lines.append(note["body"])
+    for note in sorted((n for n in notes if n["updated"] == updated), key=lambda n: n["path"]):
+        tag_run = " ".join(f"#{tag}" for tag in note["tags"])
+        out_lines.append(f"{note['body']} {tag_run}")
         out_lines.append("")
 
 dist_path = os.path.join(REPO_ROOT, "dist", "notes.md")
 with open(dist_path, "w", encoding="utf-8") as f:
     f.write("\n".join(out_lines).rstrip("\n") + "\n")
 
-print(f"build.sh: wrote dist/notes.md ({len(notes)} notes, {len(ordered)} topics)", file=sys.stderr)
+print(f"build.sh: wrote dist/notes.md ({len(notes)} notes, {len(dates)} dates)", file=sys.stderr)
 PYEOF
 
 # 5. Commit the build artifact if inside a git repo with changes to commit.

@@ -50,6 +50,7 @@ def set_config(repo, website_repo=None, attempts=None):
     text = path.read_text(encoding="utf-8")
     if website_repo is not None:
         text = re.sub(r"(?m)^  repo: .*$", "  repo: " + str(website_repo), text)
+        text = re.sub(r"(?m)^  notes_path: .*$", "  notes_path: notes.md", text)
     if attempts is not None:
         text = re.sub(
             r"(?m)^  backoff_attempts: \d+$",
@@ -89,7 +90,8 @@ Body text.
     run(["bash", "scripts/build-index.sh"], repo)
     assert (repo / "dist/notes.md").read_bytes() == first_dist
     assert (repo / "wiki/index.md").read_bytes() == first_index
-    assert first_dist.decode() == "## topic\n\n### Deterministic note\n\nBody text.\n"
+    assert "## 2026-09-27" in first_dist.decode()
+    assert "Body text. #test #stable" in first_dist.decode()
     assert "| Deterministic note | A fixed note | test, stable | 2026-09-27 | wiki/topic/note.md |" in first_index.decode()
 
 
@@ -100,7 +102,7 @@ def seed_site(base):
     site.mkdir()
     git(["init", "-q", "--bare"], bare)
     git(["init", "-q", "-b", "main"], site)
-    write(site / "notes.md", "# Site\n\n## LLM Wiki\n\nold\n\n## Old tail\nremove me\n")
+    write(site / "notes.md", "---\ntitle: Notes\n---\n\n## 2026-09-26\n\nOld note. #old\n")
     git(["add", "notes.md"], site)
     git(["commit", "-qm", "seed"], site)
     git(["remote", "add", "origin", str(bare)], site)
@@ -119,17 +121,21 @@ def remote_notes(bare, checkout):
 def check_publish(repo, base):
     bare = seed_site(base)
     set_config(repo, website_repo=bare)
-    write(repo / "dist/notes.md", "first\n")
-    run(["bash", "scripts/append-notes.sh"], repo)
-    assert remote_notes(bare, base / "readback") == "# Site\n\n## LLM Wiki\n\nfirst\n"
-
-    write(repo / "dist/notes.md", "second\n")
+    write(repo / "dist/notes.md", "## 2026-09-27\n\nFirst note. #test\n")
     run(["bash", "scripts/append-notes.sh"], repo)
     published = remote_notes(bare, base / "readback")
-    assert published == "# Site\n\n## LLM Wiki\n\nsecond\n"
-    assert published.count("## LLM Wiki") == 1
+    assert published == "---\ntitle: Notes\n---\n\n## 2026-09-27\n\nFirst note. #test\n\n## 2026-09-26\n\nOld note. #old\n"
 
-    write(repo / "dist/notes.md", "\n".join("line {}".format(i) for i in range(501)) + "\n")
+    run(["bash", "scripts/append-notes.sh"], repo)
+    assert remote_notes(bare, base / "readback") == published
+
+    write(repo / "dist/notes.md", "## 2026-09-27\n\nSecond note. #test\n")
+    run(["bash", "scripts/append-notes.sh"], repo)
+    published = remote_notes(bare, base / "readback")
+    assert "Second note. #test\n\nFirst note. #test" in published
+    assert published.count("## 2026-09-27") == 1
+
+    write(repo / "dist/notes.md", "## 2026-09-28\n\n" + "\n\n".join("Note {}. #test".format(i) for i in range(501)) + "\n")
     result = run(["bash", "scripts/append-notes.sh"], repo, ok=False)
     assert result.returncode != 0
     assert "> 500" in result.stderr
@@ -226,6 +232,7 @@ def check_static():
     assert "mkdir \"$LOCK_DIR\"" in llm
     assert publish.count('git push origin "$WEBSITE_BRANCH"') == 1
     assert '[[ "$ADDED_LINES" -gt 500 ]]' in publish
+    assert "## (\\d{4}-\\d{2}-\\d{2})" in publish
 
 
 def main():
