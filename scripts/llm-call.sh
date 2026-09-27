@@ -11,8 +11,6 @@
 #   4. On 429: backoff 2/4/8/16/32s up to build.backoff_attempts; on
 #      exhaustion, write wiki/.queue/pending.json and exit non-zero.
 #   5. On success: write the response body to <output-file>, exit 0.
-#   6. Never run two invocations in parallel — callers must serialize
-#      (a lock file is used here as a belt-and-braces guard).
 #   7. Never echo the API key.
 
 set -euo pipefail
@@ -69,17 +67,43 @@ if [[ -z "$MODEL" || -z "$BASE_URL" ]]; then
   exit 1
 fi
 
-# 6. Serialize: a single global lock so two invocations never overlap.
-LOCK_DIR="$REPO_ROOT/wiki/.queue"
-mkdir -p "$LOCK_DIR"
-LOCK_FILE="$LOCK_DIR/.llm-call.lock"
-exec 200>"$LOCK_FILE"
-flock -w 300 200 || { echo "llm-call.sh: could not acquire serialization lock" >&2; exit 1; }
+# 6. Serialize with mkdir, which is atomic on macOS and Linux.
+QUEUE_DIR="$REPO_ROOT/wiki/.queue"
+LOCK_DIR="$QUEUE_DIR/.llm-call.lock"
+mkdir -p "$QUEUE_DIR"
+LOCK_WAIT_SECONDS="${LLM_WIKI_LOCK_WAIT_SECONDS:-300}"
+WAITED=0
+
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+  LOCK_PID="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ -n "$LOCK_PID" ]] && { [[ ! "$LOCK_PID" =~ ^[0-9]+$ ]] || ! kill -0 "$LOCK_PID" 2>/dev/null; }; then
+    STALE_LOCK="$LOCK_DIR.stale.$$"
+    if mv "$LOCK_DIR" "$STALE_LOCK" 2>/dev/null; then
+      rm -rf "$STALE_LOCK"
+    fi
+    continue
+  fi
+  if [[ "$WAITED" -ge "$LOCK_WAIT_SECONDS" ]]; then
+    echo "llm-call.sh: could not acquire serialization lock within ${LOCK_WAIT_SECONDS}s" >&2
+    exit 1
+  fi
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
+echo "$$" > "$LOCK_DIR/pid"
+
+cleanup() {
+  rm -f "${BODY_FILE:-}" "${RESP_FILE:-}"
+  if [[ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" == "$$" ]]; then
+    rm -f "$LOCK_DIR/pid"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
 
 # Build the JSON request body from the prompt file, without ever echoing
 # the key. jq is preferred if present; otherwise fall back to python3.
 BODY_FILE="$(mktemp)"
-trap 'rm -f "$BODY_FILE"' EXIT
 
 python3 - "$MODEL" "$PROMPT_FILE" "$BODY_FILE" <<'PYEOF'
 import json, sys
@@ -113,7 +137,6 @@ while [[ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]]; do
 
   if [[ "$CURL_EXIT" -ne 0 ]]; then
     echo "llm-call.sh: curl failed (exit $CURL_EXIT)" >&2
-    rm -f "$RESP_FILE"
     exit 1
   fi
 
@@ -130,13 +153,11 @@ while [[ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]]; do
 
   if [[ "$HTTP_CODE" -ge 200 && "$HTTP_CODE" -lt 300 ]]; then
     cp "$RESP_FILE" "$OUTPUT_FILE"
-    rm -f "$RESP_FILE"
     exit 0
   fi
 
   echo "llm-call.sh: request failed with HTTP $HTTP_CODE" >&2
   cat "$RESP_FILE" >&2
-  rm -f "$RESP_FILE"
   exit 1
 done
 
@@ -154,6 +175,5 @@ with open(out_path, "w", encoding="utf-8") as f:
     json.dump(state, f, indent=2)
 PYEOF
 
-rm -f "$RESP_FILE"
 echo "llm-call.sh: rate limit backoff exhausted; wrote wiki/.queue/pending.json" >&2
 exit 1

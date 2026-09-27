@@ -6,9 +6,6 @@
 #   1. Read website.repo/branch/notes_path/section_header from config.yaml.
 #   2. Clone to a temp dir (or pull a cached clone at .cache/website).
 #   3. git checkout <branch> && git pull.
-#   4. If notes_path already contains section_header, remove that section
-#      up to (but not including) the next "## " heading — replaces rather
-#      than duplicates the previous import.
 #   5. Append "\n\n<section_header>\n\n" + contents of dist/notes.md.
 #   6. Guardrail: abort before committing if the diff exceeds 500 added lines.
 #   7. git add / commit.
@@ -27,7 +24,10 @@ fail() {
 }
 
 # 1. Read config (one value per line, in a fixed order).
-mapfile -t CFG_VALUES < <(python3 - "$REPO_ROOT/config.yaml" <<'PYEOF'
+CFG_VALUES=()
+while IFS= read -r value; do
+  CFG_VALUES+=("$value")
+done < <(python3 - "$REPO_ROOT/config.yaml" <<'PYEOF'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 
@@ -101,16 +101,8 @@ with open(target_path, "r", encoding="utf-8") as f:
 with open(notes_path, "r", encoding="utf-8") as f:
     new_notes = f.read().rstrip("\n")
 
-header_escaped = re.escape(header)
-# Match from the header up to (not including) the next "## " heading, or EOF.
-pattern = re.compile(
-    rf"{header_escaped}.*?(?=\n## |\Z)", re.DOTALL
-)
-
-if header in content:
-    content = pattern.sub("", content, count=1).rstrip("\n")
-else:
-    content = content.rstrip("\n")
+match = re.search(rf"(?m)^{re.escape(header)}\s*$", content)
+content = content[:match.start()].rstrip("\n") if match else content.rstrip("\n")
 
 if content:
     content = content + "\n\n" + header + "\n\n" + new_notes + "\n"

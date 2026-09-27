@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+
+
+ROOT = Path(__file__).resolve().parents[1]
+GIT_ENV = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "llm-wiki check",
+    "GIT_AUTHOR_EMAIL": "check@example.invalid",
+    "GIT_COMMITTER_NAME": "llm-wiki check",
+    "GIT_COMMITTER_EMAIL": "check@example.invalid",
+}
+
+
+def run(args, cwd, env=None, ok=True):
+    result = subprocess.run(
+        args,
+        cwd=str(cwd),
+        env=env or GIT_ENV,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if ok and result.returncode:
+        raise AssertionError(
+            "{} failed\nstdout:\n{}\nstderr:\n{}".format(
+                " ".join(args), result.stdout, result.stderr
+            )
+        )
+    return result
+
+
+def write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def git(args, cwd):
+    return run(["git"] + args, cwd)
+
+
+def set_config(repo, website_repo=None, attempts=None):
+    path = repo / "config.yaml"
+    text = path.read_text(encoding="utf-8")
+    if website_repo is not None:
+        text = re.sub(r"(?m)^  repo: .*$", "  repo: " + str(website_repo), text)
+    if attempts is not None:
+        text = re.sub(
+            r"(?m)^  backoff_attempts: \d+$",
+            "  backoff_attempts: " + str(attempts),
+            text,
+        )
+    path.write_text(text, encoding="utf-8")
+
+
+def clone_source(destination):
+    shutil.copytree(
+        ROOT,
+        destination,
+        ignore=shutil.ignore_patterns(".git", ".cache", "__pycache__"),
+    )
+    git(["init", "-q", "-b", "main"], destination)
+    git(["add", "."], destination)
+    git(["commit", "-qm", "fixture"], destination)
+
+
+def check_build(repo):
+    note = """---
+title: Deterministic note
+tags: [test, stable]
+source: raw/sources/test.md
+updated: 2026-09-27
+summary: A fixed note
+---
+Body text.
+"""
+    write(repo / "wiki/topic/note.md", note)
+    run(["bash", "build.sh"], repo)
+    first_dist = (repo / "dist/notes.md").read_bytes()
+    run(["bash", "scripts/build-index.sh"], repo)
+    first_index = (repo / "wiki/index.md").read_bytes()
+    run(["bash", "build.sh"], repo)
+    run(["bash", "scripts/build-index.sh"], repo)
+    assert (repo / "dist/notes.md").read_bytes() == first_dist
+    assert (repo / "wiki/index.md").read_bytes() == first_index
+    assert first_dist.decode() == "## topic\n\n### Deterministic note\n\nBody text.\n"
+    assert "| Deterministic note | A fixed note | test, stable | 2026-09-27 | wiki/topic/note.md |" in first_index.decode()
+
+
+def seed_site(base):
+    bare = base / "site.git"
+    site = base / "site"
+    bare.mkdir()
+    site.mkdir()
+    git(["init", "-q", "--bare"], bare)
+    git(["init", "-q", "-b", "main"], site)
+    write(site / "notes.md", "# Site\n\n## LLM Wiki\n\nold\n\n## Old tail\nremove me\n")
+    git(["add", "notes.md"], site)
+    git(["commit", "-qm", "seed"], site)
+    git(["remote", "add", "origin", str(bare)], site)
+    git(["push", "-q", "-u", "origin", "main"], site)
+    git(["symbolic-ref", "HEAD", "refs/heads/main"], bare)
+    return bare
+
+
+def remote_notes(bare, checkout):
+    if checkout.exists():
+        shutil.rmtree(checkout)
+    git(["clone", "-q", str(bare), str(checkout)], bare.parent)
+    return (checkout / "notes.md").read_text(encoding="utf-8")
+
+
+def check_publish(repo, base):
+    bare = seed_site(base)
+    set_config(repo, website_repo=bare)
+    write(repo / "dist/notes.md", "first\n")
+    run(["bash", "scripts/append-notes.sh"], repo)
+    assert remote_notes(bare, base / "readback") == "# Site\n\n## LLM Wiki\n\nfirst\n"
+
+    write(repo / "dist/notes.md", "second\n")
+    run(["bash", "scripts/append-notes.sh"], repo)
+    published = remote_notes(bare, base / "readback")
+    assert published == "# Site\n\n## LLM Wiki\n\nsecond\n"
+    assert published.count("## LLM Wiki") == 1
+
+    write(repo / "dist/notes.md", "\n".join("line {}".format(i) for i in range(501)) + "\n")
+    result = run(["bash", "scripts/append-notes.sh"], repo, ok=False)
+    assert result.returncode != 0
+    assert "> 500" in result.stderr
+    assert remote_notes(bare, base / "readback") == published
+
+
+def fake_curl(path, body, delay=False):
+    sleep = (
+        'if ! mkdir "$FAKE_STATE/active" 2>/dev/null; then touch "$FAKE_STATE/overlap"; fi\n'
+        '/bin/sleep 0.2\nrmdir "$FAKE_STATE/active"'
+        if delay
+        else ":"
+    )
+    write(
+        path,
+        """#!/usr/bin/env bash
+out=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "-o" ]]; then out="$2"; shift 2; else shift; fi
+done
+{sleep}
+printf '%s' '{body}' > "$out"
+printf '%s' '{code}'
+""".format(
+            sleep=sleep,
+            body=body,
+            code="200" if delay else "429",
+        ),
+    )
+    path.chmod(0o755)
+
+
+def check_llm(repo, base):
+    set_config(repo, attempts=1)
+    prompt = repo / "prompt.txt"
+    write(prompt, "prompt")
+    fake_bin = base / "fake-bin"
+    fake_bin.mkdir()
+    fake_curl(fake_bin / "curl", '{"error":"rate limited"}')
+    env = {
+        **GIT_ENV,
+        "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+        "OPENROUTER_API_KEY": "secret",
+    }
+    lock = repo / "wiki/.queue/.llm-call.lock"
+    lock.mkdir(parents=True)
+    write(lock / "pid", "99999999\n")
+    result = run(
+        ["bash", "scripts/llm-call.sh", str(prompt), str(repo / "response.json")],
+        repo,
+        env=env,
+        ok=False,
+    )
+    assert result.returncode != 0
+    pending = json.loads((repo / "wiki/.queue/pending.json").read_text(encoding="utf-8"))
+    assert pending["task"] == "ingest"
+    assert pending["remaining"] == [str(prompt)]
+    assert not lock.exists()
+
+    fake_curl(fake_bin / "curl", '{"ok":true}', delay=True)
+    state = base / "curl-state"
+    state.mkdir()
+    env["FAKE_STATE"] = str(state)
+    (repo / "wiki/.queue/pending.json").unlink()
+    first = subprocess.Popen(
+        ["bash", "scripts/llm-call.sh", str(prompt), str(repo / "one.json")],
+        cwd=str(repo),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    second = subprocess.Popen(
+        ["bash", "scripts/llm-call.sh", str(prompt), str(repo / "two.json")],
+        cwd=str(repo),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert first.communicate(timeout=10)[0] == ""
+    assert second.communicate(timeout=10)[0] == ""
+    assert first.returncode == second.returncode == 0
+    assert (repo / "one.json").read_text() == '{"ok":true}'
+    assert (repo / "two.json").read_text() == '{"ok":true}'
+    assert not (state / "overlap").exists()
+
+
+def check_static():
+    llm = (ROOT / "scripts/llm-call.sh").read_text(encoding="utf-8")
+    publish = (ROOT / "scripts/append-notes.sh").read_text(encoding="utf-8")
+    assert "flock" not in llm
+    assert "mapfile" not in llm + publish
+    assert "mkdir \"$LOCK_DIR\"" in llm
+    assert publish.count('git push origin "$WEBSITE_BRANCH"') == 1
+    assert '[[ "$ADDED_LINES" -gt 500 ]]' in publish
+
+
+def main():
+    check_static()
+    with tempfile.TemporaryDirectory(prefix="llm-wiki-check-") as tmp:
+        base = Path(tmp)
+        repo = base / "wiki"
+        clone_source(repo)
+        check_build(repo)
+        check_publish(repo, base)
+        check_llm(repo, base)
+    print("check.py: all checks passed")
+
+
+if __name__ == "__main__":
+    main()
