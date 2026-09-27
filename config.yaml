@@ -1,0 +1,16 @@
+wiki:
+  name: llm-wiki
+
+openrouter:
+  model: nvidia/nemotron-3-ultra
+  base_url: https://openrouter.ai/api/v1
+
+website:
+  repo: git@github.com:<user>/<site>.git
+  branch: main
+  notes_path: notes.md
+  section_header: "## LLM Wiki"
+
+build:
+  batch_size: 20
+  backoff_attempts: 5
