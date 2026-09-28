@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Structural checks
+        run: |
+          for script in build.sh scripts/*.sh; do
+            bash -n "$script"
+          done
+          python3 -m py_compile scripts/check.py scripts/lib/frontmatter.py
+
+      - name: Self-test
+        run: python3 scripts/check.py
