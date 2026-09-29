@@ -14,8 +14,9 @@ It needs no LLM API key and makes no network calls: it copies the repo into a
 temporary directory and exercises the deterministic paths end to end —
 `build.sh` and `scripts/build-index.sh` idempotency and output shape, the
 `scripts/append-notes.sh` publish flow against a local bare repo (including the
-500-added-line guardrail), and `scripts/llm-call.sh` locking and 429 backoff
-against a fake `curl`. It also asserts the static portability invariants (no
+500-added-line guardrail), `scripts/llm-call.sh` locking and 429 backoff
+against a fake `curl`, and `scripts/new-wiki.sh` deploying an empty wiki with a
+single fresh commit and the requested `config.yaml` settings. It also asserts the static portability invariants (no
 `flock`, no `mapfile`, a single push site). On success it prints
 `check.py: all checks passed`.
 
