@@ -12,7 +12,9 @@ description: Regenerate dist/notes.md and wiki/index.md, or run the offline self
 ## Steps
 1. `./build.sh` — writes `dist/notes.md` and commits it when it changes.
    Non-zero exit means a note is malformed; the message names the file.
-2. `bash scripts/build-index.sh` — rewrites `wiki/index.md`.
+2. `bash scripts/build-index.sh` — rewrites `wiki/index.md`. This step does
+   not commit the regenerated index; the calling skill (ingest/compile) owns
+   committing it.
 3. Changing scripts? Run `python3 scripts/check.py` (offline, no API key). It
    must print `check.py: all checks passed`.
 4. Report: notes and dates built, check result.

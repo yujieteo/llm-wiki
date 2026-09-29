@@ -23,4 +23,6 @@ One self-contained Markdown paragraph with source links and no heading, list, bl
 - Body is exactly one paragraph: no heading, list, or blank line, and no
   trailing tags. `build.sh` appends `#tag` for each frontmatter tag.
 - If the website has a tag registry, reuse its canonical tags.
-- `build.sh` rejects notes that break these rules.
+- `build.sh` rejects notes with missing required fields or a body that is not
+  one paragraph without a heading or blank line. `source` existence, no-list,
+  and no-trailing-tags are checked only by lint/manual review.
