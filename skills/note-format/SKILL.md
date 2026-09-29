@@ -24,5 +24,6 @@ One self-contained Markdown paragraph with source links and no heading, list, bl
   trailing tags. `build.sh` appends `#tag` for each frontmatter tag.
 - If the website has a tag registry, reuse its canonical tags.
 - `build.sh` rejects notes with missing required fields or a body that is not
-  one paragraph without a heading or blank line. `source` existence, no-list,
-  and no-trailing-tags are checked only by lint/manual review.
+  one paragraph without a heading or blank line. `lint` checks required fields,
+  `source` existence, and `updated` recency. No-list and no-trailing-tags are
+  not machine-checked (manual review only).
