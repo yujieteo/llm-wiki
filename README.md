@@ -11,26 +11,44 @@ them to your site.
 
 ## 5-minute start
 
-1. Clone the repo and enter it:
-   ```sh
-   git clone git@github.com:yujieteo/llm-wiki.git && cd llm-wiki
-   ```
-2. Create a private repository for your wiki and point `origin` at it (or keep
-   the clone and set your own remote).
-3. Copy the environment template and add your `OPENROUTER_API_KEY`:
-   ```sh
-   cp .env.example .env
-   ```
-4. Set `wiki.name`, `openrouter.model`, and `website.repo` in `config.yaml`.
-5. Point your agent at `SKILLS.md` and say `drop this link: <url>`.
-6. Say `ingest <source>` to create a note under `wiki/<topic>/`.
-7. Say `compile the wiki` to review source changes and rebuild `wiki/index.md`.
-8. Run `./build.sh` to compile all wiki notes into `dist/notes.md`.
-9. Say `publish` to merge the compiled dated notes into the website notes file.
+Deploy a fresh, generic wiki from this template. The new wiki gets its own
+single-commit history — none of this repo's git history or notes come along.
 
-To create another private wiki, clone this repository into a new directory, set a
-new private `origin`, and update `config.yaml`. Each clone keeps its sources,
-notes, history, and website section separate.
+1. Get the template and deploy a new wiki next to it:
+   ```sh
+   git clone https://github.com/yujieteo/llm-wiki.git
+   bash llm-wiki/scripts/new-wiki.sh my-wiki \
+     --site-repo git@github.com:<user>/<site>.git \
+     --remote git@github.com:<user>/my-wiki.git
+   cd my-wiki
+   ```
+   The template clone is only a source; you can delete it afterwards.
+2. Put your `OPENROUTER_API_KEY` in `.env` (already created from
+   `.env.example`, and git-ignored).
+3. Push once: `git push -u origin main`.
+4. Point your agent at `SKILLS.md` and say `drop this link: <url>`.
+5. Say `ingest <source>` to create a note under `wiki/<topic>/`.
+6. Say `compile the wiki` to review source changes and rebuild `wiki/index.md`.
+7. Run `./build.sh` to compile all wiki notes into `dist/notes.md`.
+8. Say `publish` to merge the compiled dated notes into the website notes file.
+
+`new-wiki.sh` options (all optional):
+
+| Option | Sets |
+|---|---|
+| `--name NAME` | `wiki.name` (default: the target directory's name) |
+| `--section HEADER` | `website.section_header` (default: `## NAME`) |
+| `--site-repo URL` | `website.repo` |
+| `--model MODEL` | `openrouter.model` |
+| `--remote URL` | the new wiki's `origin` (never pushed for you) |
+| `--no-commit` | stage files but skip the initial commit |
+
+It copies the template's committed files, empties `raw/`, `wiki/` and
+`dist/notes.md`, writes your settings into `config.yaml`, and runs
+`git init -b main` with one fresh commit. Run it again with another directory
+to create another private wiki; each keeps its sources, notes, history, and
+website section separate. Any existing wiki can also serve as the template —
+its notes and sources are never copied.
 
 ## Build and test
 
@@ -50,6 +68,7 @@ to `main` and every pull request. Details: [docs/development.md](docs/developmen
 - `skills/`      — one SKILL.md per capability; routed by `SKILLS.md`
 - `docs/`        — development and CI details
 - `scripts/`     — deterministic mechanical work; no LLM inside
+                   (`new-wiki.sh` deploys a fresh wiki from this template)
 - `dist/`        — committed build artifact; the public interface
 - `.github/`     — CI workflow for the self-test and structural checks
 - `config.yaml`, `.env.example` — settings and the API-key template

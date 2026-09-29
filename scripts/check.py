@@ -224,6 +224,42 @@ def check_llm(repo, base):
     assert not (state / "overlap").exists()
 
 
+def check_new_wiki(repo, base):
+    target = base / "fresh-wiki"
+    write(repo / "raw/sources/old.md", "template content\n")
+    git(["add", "raw/sources/old.md"], repo)
+    git(["commit", "-qm", "template source"], repo)
+    run(
+        [
+            "bash", "scripts/new-wiki.sh", str(target),
+            "--name", "fresh-wiki",
+            "--site-repo", "git@example.invalid:me/site.git",
+            "--model", "test/model",
+            "--remote", "git@example.invalid:me/fresh-wiki.git",
+        ],
+        repo,
+    )
+    log = git(["log", "--format=%s"], target).stdout.splitlines()
+    assert log == ["init: fresh-wiki from llm-wiki template"], log
+    assert git(["rev-parse", "--abbrev-ref", "HEAD"], target).stdout.strip() == "main"
+    assert git(["status", "--porcelain"], target).stdout == ""
+    assert git(["config", "remote.origin.url"], target).stdout.strip()
+    config = (target / "config.yaml").read_text(encoding="utf-8")
+    assert "  name: fresh-wiki\n" in config
+    assert "  model: test/model\n" in config
+    assert "  repo: git@example.invalid:me/site.git\n" in config
+    assert '  section_header: "## fresh-wiki"\n' in config
+    assert (target / ".env").is_file()
+    assert git(["ls-files", ".env"], target).stdout == ""
+    assert sorted(p.name for p in (target / "raw/sources").iterdir()) == [".gitkeep"]
+    assert [p.name for p in (target / "wiki").iterdir()] == ["index.md"]
+    assert (target / "dist/notes.md").read_text(encoding="utf-8") == "\n"
+    run(["bash", "build.sh"], target)
+    run(["bash", "scripts/build-index.sh"], target)
+    assert git(["status", "--porcelain"], target).stdout == ""
+    assert run(["bash", "scripts/new-wiki.sh", str(target)], repo, ok=False).returncode
+
+
 def check_static():
     llm = (ROOT / "scripts/llm-call.sh").read_text(encoding="utf-8")
     publish = (ROOT / "scripts/append-notes.sh").read_text(encoding="utf-8")
@@ -244,6 +280,7 @@ def main():
         check_build(repo)
         check_publish(repo, base)
         check_llm(repo, base)
+        check_new_wiki(repo, base)
     print("check.py: all checks passed")
 
 
