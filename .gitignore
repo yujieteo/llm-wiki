@@ -4,3 +4,6 @@ __pycache__/
 wiki/.queue/
 wiki/.diffs/
 .cache/
+.env.*
+!.env.example
+.claude/settings.local.json

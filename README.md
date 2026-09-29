@@ -32,53 +32,29 @@ To create another private wiki, clone this repository into a new directory, set 
 new private `origin`, and update `config.yaml`. Each clone keeps its sources,
 notes, history, and website section separate.
 
-## Checks
-
-Run the offline self-test with:
+## Build and test
 
 ```sh
-python3 scripts/check.py
+./build.sh && bash scripts/build-index.sh   # regenerate dist/notes.md and wiki/index.md
+python3 scripts/check.py                    # offline self-test; no API key, no network
 ```
 
-It needs no LLM API key and makes no network calls: it copies the repo into a
-temporary directory and exercises the deterministic paths end to end —
-`build.sh` and `scripts/build-index.sh` idempotency and output shape, the
-`scripts/append-notes.sh` publish flow against a local bare repo (including the
-500-added-line guardrail), and `scripts/llm-call.sh` locking and 429 backoff
-against a fake `curl`. It also asserts the static portability invariants (no
-`flock`, no `mapfile`, a single push site). On success it prints
-`check.py: all checks passed`.
-
-CI (`.github/workflows/ci.yml`) runs the same self-test plus structural checks
-(`bash -n` on every shell script and `python3 -m py_compile` on the Python
-sources) on every push to `main` and every pull request. No secrets are
-required.
-
-## Generated outputs
-
-Two committed files are generated and must not be edited by hand:
-
-- `dist/notes.md` — the public interface. `./build.sh` globs `wiki/**/*.md`
-  (excluding `wiki/index.md`, `wiki/.diffs/**`, and `wiki/.queue/**`), validates
-  each note's frontmatter and single-paragraph body, groups the paragraphs by
-  `updated` date, appends each note's tags, and writes the result. The script
-  commits the artifact when it changes.
-- `wiki/index.md` — the note index. `bash scripts/build-index.sh` rebuilds the
-  markdown table from note frontmatter (`title`, `summary`, `tags`, `updated`,
-  `path`), sorted by topic then update date.
-
-Regenerate both with `./build.sh && bash scripts/build-index.sh` after changing
-notes. The check suite asserts both are idempotent, so hand edits will be
-overwritten on the next build.
+`dist/notes.md` and `wiki/index.md` are generated; do not edit them by hand.
+CI runs the same self-test plus `bash -n` / `py_compile` checks on every push
+to `main` and every pull request. Details: [docs/development.md](docs/development.md).
 
 ## Layout
 - `raw/sources/` — human-only, immutable
 - `raw/links/`   — LLM-writable URL manifests
 - `wiki/`        — LLM-owned notes; `index.md` is generated
 - `skills/`      — one SKILL.md per capability; routed by `SKILLS.md`
+- `docs/`        — development and CI details
 - `scripts/`     — deterministic mechanical work; no LLM inside
 - `dist/`        — committed build artifact; the public interface
 - `.github/`     — CI workflow for the self-test and structural checks
+- `config.yaml`, `.env.example` — settings and the API-key template
+
+Contributing: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Agent entry point
 
@@ -86,7 +62,7 @@ Point any agent (Codex, Claude Code, or a local dev loop) at **`SKILLS.md`**
 first. It is a pure router: it lists the hard prohibitions that hold across
 every skill, and maps a trigger phrase to exactly one `skills/*/SKILL.md`
 file. Agents load one skill at a time and never chain skills within a single
-invocation.
+invocation, except to read `skills/note-format/SKILL.md` as a reference.
 
 ## Invariants
 
