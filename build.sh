@@ -22,49 +22,29 @@ python3 - "$REPO_ROOT" <<'PYEOF'
 import os
 import sys
 sys.path.insert(0, os.path.join(sys.argv[1], "scripts", "lib"))
-from frontmatter import split_frontmatter  # noqa: E402
+from frontmatter import read_notes  # noqa: E402
 
 REPO_ROOT = sys.argv[1]
 WIKI_DIR = os.path.join(REPO_ROOT, "wiki")
-REQUIRED = ["title", "tags", "source", "updated", "summary"]
 
 notes = []
 errors = []
 
-for root, dirs, files in os.walk(WIKI_DIR):
-    rel_root = os.path.relpath(root, WIKI_DIR)
-    parts = [] if rel_root == "." else rel_root.split(os.sep)
-    if parts and parts[0] in (".diffs", ".queue"):
-        dirs[:] = []
+for rel_path, _topic, fm, body, error in read_notes(WIKI_DIR):
+    if error:
+        errors.append(error)
         continue
-    for fname in sorted(files):
-        if not fname.endswith(".md"):
-            continue
-        rel_path = os.path.normpath(os.path.join(rel_root, fname)) if rel_root != "." else fname
-        if rel_path == "index.md":
-            continue
-        full_path = os.path.join(root, fname)
-        with open(full_path, "r", encoding="utf-8") as f:
-            text = f.read()
-        fm, body = split_frontmatter(text)
-        if fm is None:
-            errors.append(f"wiki/{rel_path}: missing frontmatter")
-            continue
-        missing = [k for k in REQUIRED if not fm.get(k)]
-        if missing:
-            errors.append(f"wiki/{rel_path}: missing required field(s): {', '.join(missing)}")
-            continue
-        body = body.strip()
-        if not body or "\n\n" in body or body.startswith("#"):
-            errors.append(f"wiki/{rel_path}: body must be one Markdown paragraph without a heading")
-            continue
-        tags = fm["tags"] if isinstance(fm["tags"], list) else [fm["tags"]]
-        notes.append({
-            "updated": fm["updated"],
-            "body": body,
-            "tags": tags,
-            "path": rel_path,
-        })
+    body = body.strip()
+    if not body or "\n\n" in body or body.startswith("#"):
+        errors.append(f"wiki/{rel_path}: body must be one Markdown paragraph without a heading")
+        continue
+    tags = fm["tags"] if isinstance(fm["tags"], list) else [fm["tags"]]
+    notes.append({
+        "updated": fm["updated"],
+        "body": body,
+        "tags": tags,
+        "path": rel_path,
+    })
 
 if errors:
     for e in errors:

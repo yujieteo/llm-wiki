@@ -24,15 +24,14 @@ Also supports block-list style values:
 This is intentionally not a general YAML parser. It only needs to round-trip
 the flat, single-document frontmatter this repo writes.
 """
+import os
 import re
-import sys
 
 
 def split_frontmatter(text):
     """Return (frontmatter_dict, body_str) or (None, text) if no frontmatter."""
     if not text.startswith("---"):
         return None, text
-    parts = text.split("\n---", 1)
     # text starts with '---\n...\n---\nbody'
     m = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, re.DOTALL)
     if not m:
@@ -85,18 +84,36 @@ def _scalar(v):
     return v
 
 
-if __name__ == "__main__":
-    # CLI helper: frontmatter.py <file> <field>
-    # Prints the requested field's value (empty line if absent).
-    path = sys.argv[1]
-    field = sys.argv[2] if len(sys.argv) > 2 else None
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
-    fm, body = split_frontmatter(text)
-    if fm is None:
-        sys.exit(2)
-    if field is None:
-        for k, v in fm.items():
-            print(f"{k}={v}")
-    else:
-        print(fm.get(field, ""))
+
+REQUIRED = ["title", "tags", "source", "updated", "summary"]
+
+
+def read_notes(wiki_dir):
+    """Yield (rel_path, topic, frontmatter, body, error) for every wiki note.
+
+    Skips wiki/index.md and wiki/.diffs/, wiki/.queue/. Notes come in a stable
+    walk order. error is None, or why the note's frontmatter is unusable
+    (missing, or a required field empty); the build and the index both refuse
+    such a note, so they share this one reading of the wiki.
+    """
+    for root, dirs, files in os.walk(wiki_dir):
+        rel_root = os.path.relpath(root, wiki_dir)
+        parts = [] if rel_root == "." else rel_root.split(os.sep)
+        if parts and parts[0] in (".diffs", ".queue"):
+            dirs[:] = []
+            continue
+        for fname in sorted(files):
+            if not fname.endswith(".md"):
+                continue
+            rel_path = os.path.normpath(os.path.join(rel_root, fname)) if rel_root != "." else fname
+            if rel_path == "index.md":
+                continue
+            with open(os.path.join(root, fname), "r", encoding="utf-8") as f:
+                fm, body = split_frontmatter(f.read())
+            topic = parts[0] if parts else "(root)"
+            if fm is None:
+                yield rel_path, topic, None, body, f"wiki/{rel_path}: missing frontmatter"
+                continue
+            missing = [k for k in REQUIRED if not fm.get(k)]
+            error = f"wiki/{rel_path}: missing required field(s): {', '.join(missing)}" if missing else None
+            yield rel_path, topic, fm, body, error
