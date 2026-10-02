@@ -95,6 +95,31 @@ Body text.
     assert "| Deterministic note | A fixed note | test, stable | 2026-09-27 | wiki/topic/note.md |" in first_index.decode()
 
 
+def check_invalid_notes(base):
+    """build.sh and build-index.sh refuse unusable notes, name each one, and write nothing."""
+    repo = base / "invalid"
+    clone_source(repo)
+    good = "---\ntitle: Good\ntags: [a]\nsource: s\nupdated: 2026-09-27\nsummary: s\n---\nFine.\n"
+    write(repo / "wiki/a/good.md", good)
+    write(repo / "wiki/a/bare.md", "No frontmatter.\n")
+    write(repo / "wiki/b/empty.md", good.replace("summary: s", "summary: "))
+    write(repo / "wiki/b/two.md", good.replace("Fine.", "One.\n\nTwo."))
+    write(repo / "wiki/.queue/skipped.md", "Queued, never read.\n")
+    before = [(repo / p).read_bytes() for p in ("dist/notes.md", "wiki/index.md")]
+    build = run(["bash", "build.sh"], repo, ok=False)
+    assert build.returncode == 1
+    frontmatter_errors = [
+        "wiki/a/bare.md: missing frontmatter",
+        "wiki/b/empty.md: missing required field(s): summary",
+    ]
+    body_error = "wiki/b/two.md: body must be one Markdown paragraph without a heading"
+    assert sorted(build.stderr.splitlines()) == sorted(frontmatter_errors + [body_error]), build.stderr
+    index = run(["bash", "scripts/build-index.sh"], repo, ok=False)
+    assert index.returncode == 1
+    assert sorted(index.stderr.splitlines()) == sorted(frontmatter_errors), index.stderr
+    assert [(repo / p).read_bytes() for p in ("dist/notes.md", "wiki/index.md")] == before
+
+
 def seed_site(base):
     bare = base / "site.git"
     site = base / "site"
@@ -278,6 +303,7 @@ def main():
         repo = base / "wiki"
         clone_source(repo)
         check_build(repo)
+        check_invalid_notes(base)
         check_publish(repo, base)
         check_llm(repo, base)
         check_new_wiki(repo, base)
