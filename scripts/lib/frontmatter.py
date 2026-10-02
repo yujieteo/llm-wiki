@@ -84,7 +84,6 @@ def _scalar(v):
     return v
 
 
-
 REQUIRED = ["title", "tags", "source", "updated", "summary"]
 
 
@@ -92,9 +91,10 @@ def read_notes(wiki_dir):
     """Yield (rel_path, topic, frontmatter, body, error) for every wiki note.
 
     Skips wiki/index.md and wiki/.diffs/, wiki/.queue/. Notes come in os.walk
-    order: files within a directory are sorted, directories are not. error is None, or why the note's frontmatter is unusable
-    (missing, or a required field empty); the build and the index both refuse
-    such a note, so they share this one reading of the wiki.
+    order: files within a directory are sorted, directories are not. error is
+    None, or why the note's frontmatter is unusable (missing, or a required
+    field empty); the build and the index both refuse such a note, so they
+    share this one reading of the wiki.
     """
     for root, dirs, files in os.walk(wiki_dir):
         rel_root = os.path.relpath(root, wiki_dir)
