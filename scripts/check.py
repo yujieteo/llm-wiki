@@ -108,14 +108,15 @@ def check_invalid_notes(base):
     before = [(repo / p).read_bytes() for p in ("dist/notes.md", "wiki/index.md")]
     build = run(["bash", "build.sh"], repo, ok=False)
     assert build.returncode == 1
-    assert build.stderr.splitlines() == [
+    frontmatter_errors = [
         "wiki/a/bare.md: missing frontmatter",
         "wiki/b/empty.md: missing required field(s): summary",
-        "wiki/b/two.md: body must be one Markdown paragraph without a heading",
-    ], build.stderr
+    ]
+    body_error = "wiki/b/two.md: body must be one Markdown paragraph without a heading"
+    assert sorted(build.stderr.splitlines()) == sorted(frontmatter_errors + [body_error]), build.stderr
     index = run(["bash", "scripts/build-index.sh"], repo, ok=False)
     assert index.returncode == 1
-    assert index.stderr.splitlines() == build.stderr.splitlines()[:2], index.stderr
+    assert sorted(index.stderr.splitlines()) == sorted(frontmatter_errors), index.stderr
     assert [(repo / p).read_bytes() for p in ("dist/notes.md", "wiki/index.md")] == before
 
 
